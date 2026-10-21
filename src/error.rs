@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum GitCryptError {
     #[error("Git error: {0}")]
-    Git(#[from] git2::Error),
+    Git(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

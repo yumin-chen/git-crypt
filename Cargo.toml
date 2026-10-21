@@ -46,7 +46,7 @@ toml = { version = "0.8", optional = true }
 config = { version = "0.14", default-features = false, features = ["toml"], optional = true }
 
 # Git operations
-git2 = "0.19"
+gix = "0.66"
 
 # Error handling and utilities
 anyhow = "1.0"
