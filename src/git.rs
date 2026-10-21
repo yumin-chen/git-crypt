@@ -1,6 +1,6 @@
 use crate::crypto::CryptoKey;
 use crate::error::{GitCryptError, Result};
-use git2::Repository;
+use gix::Repository;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -11,42 +11,54 @@ pub struct GitRepo {
 impl GitRepo {
     /// Open repository at the given path
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let repo = Repository::discover(path).map_err(|_| GitCryptError::NotInGitRepo)?;
+        let repo = gix::discover(path).map_err(|_| GitCryptError::NotInGitRepo)?;
         Ok(Self { repo })
     }
 
     /// Get the git directory path
     pub fn git_dir(&self) -> &Path {
-        self.repo.path()
+        self.repo.git_dir()
     }
 
     /// Configure git filters for git-crypt
     pub fn configure_filters(&self) -> Result<()> {
-        let mut config = self.repo.config()?;
+        let config_path = self.repo.git_dir().join("config");
+        let mut config = if config_path.exists() {
+            gix::config::File::from_path_no_includes(config_path.clone(), gix::config::Source::Local)
+                .map_err(|e| GitCryptError::Git(e.to_string()))?
+        } else {
+            gix::config::File::new(gix::config::file::Metadata::from(gix::config::Source::Local))
+        };
 
-        // Set up clean filter (encrypts on add/commit)
-        config.set_str("filter.git-crypt.clean", "git-crypt clean")?;
+        config.set_raw_value(&"filter.git-crypt.clean", "git-crypt clean")
+            .map_err(|e| GitCryptError::Git(e.to_string()))?;
+        config.set_raw_value(&"filter.git-crypt.smudge", "git-crypt smudge")
+            .map_err(|e| GitCryptError::Git(e.to_string()))?;
+        config.set_raw_value(&"filter.git-crypt.diff", "git-crypt diff")
+            .map_err(|e| GitCryptError::Git(e.to_string()))?;
+        config.set_raw_value(&"filter.git-crypt.required", "true")
+            .map_err(|e| GitCryptError::Git(e.to_string()))?;
 
-        // Set up smudge filter (decrypts on checkout)
-        config.set_str("filter.git-crypt.smudge", "git-crypt smudge")?;
-
-        // Don't diff encrypted files
-        config.set_str("filter.git-crypt.diff", "git-crypt diff")?;
-
-        // Required attribute
-        config.set_bool("filter.git-crypt.required", true)?;
+        let mut file = std::fs::File::create(&config_path)?;
+        config.write_to(&mut file)?;
 
         Ok(())
     }
 
     /// Remove git-crypt filters
     pub fn remove_filters(&self) -> Result<()> {
-        let mut config = self.repo.config()?;
+        let config_path = self.repo.git_dir().join("config");
+        if !config_path.exists() {
+            return Ok(());
+        }
 
-        let _ = config.remove("filter.git-crypt.clean");
-        let _ = config.remove("filter.git-crypt.smudge");
-        let _ = config.remove("filter.git-crypt.diff");
-        let _ = config.remove("filter.git-crypt.required");
+        let mut config = gix::config::File::from_path_no_includes(config_path.clone(), gix::config::Source::Local)
+            .map_err(|e| GitCryptError::Git(e.to_string()))?;
+
+        let _ = config.remove_section("filter", Some("git-crypt".into()));
+
+        let mut file = std::fs::File::create(&config_path)?;
+        config.write_to(&mut file)?;
 
         Ok(())
     }
@@ -54,7 +66,7 @@ impl GitRepo {
     /// Get repository root path
     #[allow(dead_code)]
     pub fn workdir(&self) -> Result<&Path> {
-        self.repo.workdir().ok_or(GitCryptError::Other(
+        self.repo.work_dir().ok_or(GitCryptError::Other(
             "Repository has no working directory".into(),
         ))
     }
